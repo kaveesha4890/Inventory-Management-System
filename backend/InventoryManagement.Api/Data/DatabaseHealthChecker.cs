@@ -36,8 +36,9 @@ public class DatabaseHealthChecker
             }
 
             // Run a lightweight round-trip query to confirm the server responds correctly.
+            // EF Core expects scalar queries to return a column named 'Value'
             var serverVersion = await _dbContext.Database
-                .SqlQuery<string>($"SELECT version()")
+                .SqlQuery<string>($"SELECT version() AS \"Value\"")
                 .FirstOrDefaultAsync(cancellationToken);
 
             _logger.LogInformation("Database connectivity check passed. Server: {ServerVersion}", serverVersion);
