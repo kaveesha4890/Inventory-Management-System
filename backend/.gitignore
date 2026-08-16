@@ -3,8 +3,24 @@
 # ============================================================
 
 # --------------------------
-# Build outputs
+# ⛔ SECRETS — never commit
 # --------------------------
+secrets.json
+**/secrets.json
+.env
+.env.*
+*.pfx
+*.p12
+*.key
+*.pem
+
+# Protect any accidentally-created local appsettings overrides
+# (appsettings.Production.json, appsettings.Staging.json, etc.)
+# Keep appsettings.json and appsettings.Development.json tracked (no real creds).
+appsettings.Production.json
+appsettings.Staging.json
+
+
 [Dd]ebug/
 [Rr]elease/
 [Bb]in/

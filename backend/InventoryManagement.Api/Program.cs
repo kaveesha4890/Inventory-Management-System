@@ -1,8 +1,11 @@
+using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi;
+using InventoryManagement.Api.Data;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container.
+// ── Services ──────────────────────────────────────────────────────────────────
+
 builder.Services.AddControllers();
 
 // Register Swashbuckle Swagger generator
@@ -17,12 +20,56 @@ builder.Services.AddSwaggerGen(options =>
     });
 });
 
+// ── Database (EF Core + Npgsql / Supabase PostgreSQL) ─────────────────────────
+//
+// Connection string resolution order (highest wins):
+//   1. Environment variable  : ConnectionStrings__DefaultConnection
+//   2. User Secrets (dev)    : dotnet user-secrets set "ConnectionStrings:DefaultConnection" "Host=..."
+//   3. appsettings.json      : placeholder — intentionally empty, never put real creds here
+//
+var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+
+if (string.IsNullOrWhiteSpace(connectionString))
+{
+    // Log a clear warning; the app will still start but DB endpoints will fail gracefully.
+    Console.WriteLine(
+        "[WARNING] ConnectionStrings:DefaultConnection is not configured. " +
+        "Database features will be unavailable. " +
+        "See backend/connection-string-guide.txt for setup instructions.");
+}
+
+builder.Services.AddDbContext<AppDbContext>(options =>
+{
+    if (!string.IsNullOrWhiteSpace(connectionString))
+    {
+        options.UseNpgsql(connectionString, npgsqlOptions =>
+        {
+            // Retry transient failures (e.g., cold-start on Supabase free tier)
+            npgsqlOptions.EnableRetryOnFailure(
+                maxRetryCount: 3,
+                maxRetryDelay: TimeSpan.FromSeconds(5),
+                errorCodesToAdd: null);
+        });
+    }
+    else
+    {
+        // Register with no provider so DI resolution still works;
+        // actual DB calls will throw and be caught by the health checker.
+        options.UseNpgsql(string.Empty);
+    }
+});
+
+// Register the lightweight DB health checker
+builder.Services.AddScoped<DatabaseHealthChecker>();
+
+// ── Build ──────────────────────────────────────────────────────────────────────
+
 var app = builder.Build();
 
-// Configure the HTTP request pipeline.
+// ── Middleware pipeline ────────────────────────────────────────────────────────
+
 if (app.Environment.IsDevelopment())
 {
-    // Interactive Swagger UI at /swagger
     app.UseSwagger();
     app.UseSwaggerUI(options =>
     {
@@ -32,14 +79,27 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
-
 app.UseAuthorization();
-
 app.MapControllers();
 
-// Health-check endpoint
-app.MapGet("/health", () => Results.Ok(new { status = "Healthy", timestamp = DateTime.UtcNow }))
-   .WithTags("Health");
+// ── Built-in health endpoints ──────────────────────────────────────────────────
+
+// Basic liveness check — always returns 200 (no DB involved)
+app.MapGet("/health", () => Results.Ok(new
+{
+    status = "Healthy",
+    timestamp = DateTime.UtcNow
+})).WithTags("Health");
+
+// Database connectivity check — tests actual Supabase connection
+app.MapGet("/health/db", async (DatabaseHealthChecker checker, CancellationToken ct) =>
+{
+    var result = await checker.CheckAsync(ct);
+    return result.IsHealthy
+        ? Results.Ok(result)
+        : Results.Json(result, statusCode: 503);
+}).WithTags("Health");
 
 app.Run();
+
 
